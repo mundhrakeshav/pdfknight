@@ -16,7 +16,19 @@ var (
 	mode           string
 	dpi            int
 	preserveImages bool
+
+	// Version info
+	version   = "dev"
+	buildTime = "unknown"
+	gitCommit = "unknown"
 )
+
+// SetVersionInfo sets the version information from main
+func SetVersionInfo(v, bt, gc string) {
+	version = v
+	buildTime = bt
+	gitCommit = gc
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "pdfdarkmode <input.pdf>",
@@ -95,11 +107,23 @@ func selectModeInteractively() string {
 	}
 }
 
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print version information",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("pdfdarkmode %s\n", version)
+		fmt.Printf("  Build time: %s\n", buildTime)
+		fmt.Printf("  Git commit: %s\n", gitCommit)
+	},
+}
+
 func init() {
 	rootCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output PDF file (default: <input>_dark.pdf)")
 	rootCmd.Flags().StringVarP(&mode, "mode", "m", "", "Conversion mode: 'raster' or 'direct'")
 	rootCmd.Flags().IntVar(&dpi, "dpi", 150, "DPI for raster mode (default: 150)")
 	rootCmd.Flags().BoolVar(&preserveImages, "preserve-images", true, "Preserve images in direct mode (default: true)")
+
+	rootCmd.AddCommand(versionCmd)
 }
 
 func Execute() {
