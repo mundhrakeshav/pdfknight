@@ -4,20 +4,18 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-)
 
-// Dark mode color values (normalized 0-1)
-var (
-	darkBgValue    = 0.102 // #1a1a1a = 26/255
-	lightTextValue = 0.878 // #e0e0e0 = 224/255
+	"pdfdarkmode/converter/colors"
 )
 
 // Transformer handles color value transformations for dark mode
-type Transformer struct{}
+type Transformer struct {
+	scheme colors.Scheme
+}
 
-// NewTransformer creates a new color transformer
-func NewTransformer() *Transformer {
-	return &Transformer{}
+// NewTransformer creates a new color transformer with the given color scheme
+func NewTransformer(scheme colors.Scheme) *Transformer {
+	return &Transformer{scheme: scheme}
 }
 
 // TransformOperator transforms a color operator for dark mode
@@ -60,31 +58,79 @@ func (t *Transformer) transformRGB(op ColorOperator) string {
 }
 
 // transformGray transforms a grayscale color operator
+// For tinted schemes (like sepia), this converts gray to RGB to preserve the tint
 func (t *Transformer) transformGray(op ColorOperator) string {
 	gray := parseFloat(op.Values[0])
 
-	// Apply smart inversion based on lightness
+	bg := t.scheme.Background
+	txt := t.scheme.Text
+
+	// Check if scheme has tinted colors (non-grayscale)
+	bgIsTinted := !isGrayscale(bg.R, bg.G, bg.B)
+	txtIsTinted := !isGrayscale(txt.R, txt.G, txt.B)
+
+	if bgIsTinted || txtIsTinted {
+		// For tinted schemes, convert to RGB operator to preserve color tint
+		var newR, newG, newB float64
+
+		if gray > 0.9 {
+			newR, newG, newB = bg.R, bg.G, bg.B
+		} else if gray > 0.7 {
+			factor := (gray - 0.7) / 0.2
+			newR, newG, newB = interpolateColor(txt, bg, factor)
+		} else if gray < 0.15 {
+			newR, newG, newB = txt.R, txt.G, txt.B
+		} else if gray < 0.4 {
+			factor := gray / 0.4
+			midGray := 0.5
+			newR = txt.R - factor*(txt.R-midGray)
+			newG = txt.G - factor*(txt.G-midGray)
+			newB = txt.B - factor*(txt.B-midGray)
+		} else {
+			inverted := 1 - gray
+			newR, newG, newB = inverted, inverted, inverted
+		}
+
+		// Convert gray operator to RGB operator
+		rgbOp := grayToRGBOperator(op.Operator)
+		return fmt.Sprintf("%.3f %.3f %.3f %s", newR, newG, newB, rgbOp)
+	}
+
+	// For grayscale schemes, keep it simple
 	var newGray float64
 	if gray > 0.9 {
-		// White -> dark background
-		newGray = darkBgValue
+		newGray = bg.R
 	} else if gray > 0.7 {
-		// Light gray -> dark gray
 		factor := (gray - 0.7) / 0.2
-		newGray = 0.1 + (1-factor)*0.15
+		newGray = bg.R + (1-factor)*(bg.R+0.05)
 	} else if gray < 0.15 {
-		// Black -> light text
-		newGray = lightTextValue
+		newGray = txt.R
 	} else if gray < 0.4 {
-		// Dark gray -> light gray
 		factor := gray / 0.4
-		newGray = 0.88 - factor*0.3
+		newGray = txt.R - factor*0.3
 	} else {
-		// Mid gray - simple inversion
 		newGray = 1 - gray
 	}
 
 	return fmt.Sprintf("%.3f %s", newGray, op.Operator)
+}
+
+// isGrayscale checks if RGB values are approximately equal (grayscale)
+func isGrayscale(r, g, b float64) bool {
+	const threshold = 0.02
+	return math.Abs(r-g) < threshold && math.Abs(g-b) < threshold && math.Abs(r-b) < threshold
+}
+
+// grayToRGBOperator converts a grayscale PDF operator to its RGB equivalent
+func grayToRGBOperator(grayOp string) string {
+	switch grayOp {
+	case "g", "sc", "scn": // gray fill operators
+		return "rg" // RGB fill
+	case "G", "SC", "SCN": // gray stroke operators
+		return "RG" // RGB stroke
+	default:
+		return grayOp
+	}
 }
 
 // transformCMYK transforms a CMYK color operator
@@ -102,50 +148,108 @@ func (t *Transformer) transformCMYK(op ColorOperator) string {
 	saturation := t.getSaturation(r, g, b)
 	lightness := t.getLightness(r, g, b)
 
-	var newC, newM, newY, newK float64
+	bg := t.scheme.Background
+	txt := t.scheme.Text
+
+	// Check if scheme has tinted colors
+	bgIsTinted := !isGrayscale(bg.R, bg.G, bg.B)
+	txtIsTinted := !isGrayscale(txt.R, txt.G, txt.B)
 
 	if saturation < 0.15 {
-		// Document color - convert to grayscale equivalent
+		// Document color - for tinted schemes, output RGB to preserve tint
+		if bgIsTinted || txtIsTinted {
+			var newR, newG, newB float64
+			if lightness > 0.9 {
+				newR, newG, newB = bg.R, bg.G, bg.B
+			} else if lightness > 0.7 {
+				factor := (lightness - 0.7) / 0.2
+				newR, newG, newB = interpolateColor(txt, bg, factor)
+			} else if lightness < 0.15 {
+				newR, newG, newB = txt.R, txt.G, txt.B
+			} else if lightness < 0.4 {
+				factor := lightness / 0.4
+				midGray := 0.5
+				newR = txt.R - factor*(txt.R-midGray)
+				newG = txt.G - factor*(txt.G-midGray)
+				newB = txt.B - factor*(txt.B-midGray)
+			} else {
+				inverted := 1 - lightness
+				newR, newG, newB = inverted, inverted, inverted
+			}
+			// Convert CMYK operator to RGB operator
+			rgbOp := cmykToRGBOperator(op.Operator)
+			return fmt.Sprintf("%.3f %.3f %.3f %s", newR, newG, newB, rgbOp)
+		}
+
+		// For grayscale schemes, use CMYK
 		var newGray float64
 		if lightness > 0.9 {
-			newGray = darkBgValue
+			newGray = bg.R
 		} else if lightness < 0.15 {
-			newGray = lightTextValue
+			newGray = txt.R
 		} else {
 			newGray = 1 - lightness
 		}
 		// Convert gray to CMYK (C=M=Y=0, K=1-gray)
-		newK = 1 - newGray
-		newC, newM, newY = 0, 0, 0
-	} else {
-		// Colorful - adjust brightness
-		newR, newG, newB := t.adjustColorfulRGB(r, g, b, lightness)
-		// Convert back to CMYK
-		newC, newM, newY, newK = rgbToCMYK(newR, newG, newB)
+		newK := 1 - newGray
+		return fmt.Sprintf("%.3f %.3f %.3f %.3f %s", 0.0, 0.0, 0.0, newK, op.Operator)
 	}
+
+	// Colorful - adjust brightness
+	newR, newG, newB := t.adjustColorfulRGB(r, g, b, lightness)
+	// Convert back to CMYK
+	newC, newM, newY, newK := rgbToCMYK(newR, newG, newB)
 
 	return fmt.Sprintf("%.3f %.3f %.3f %.3f %s", newC, newM, newY, newK, op.Operator)
 }
 
+// cmykToRGBOperator converts a CMYK PDF operator to its RGB equivalent
+func cmykToRGBOperator(cmykOp string) string {
+	switch cmykOp {
+	case "k": // CMYK fill
+		return "rg" // RGB fill
+	case "K": // CMYK stroke
+		return "RG" // RGB stroke
+	default:
+		return cmykOp
+	}
+}
+
 // invertDocumentColorRGB returns RGB values for inverted document color
 func (t *Transformer) invertDocumentColorRGB(lightness float64) (r, g, b float64) {
-	var newLightness float64
+	bg := t.scheme.Background
+	txt := t.scheme.Text
 
 	if lightness > 0.9 {
-		newLightness = darkBgValue
+		// White -> dark background (use full RGB)
+		return bg.R, bg.G, bg.B
 	} else if lightness > 0.7 {
-		factor := (lightness - 0.7) / 0.2
-		newLightness = 0.1 + (1-factor)*0.15
+		// Light gray -> interpolate towards background
+		factor := (lightness - 0.7) / 0.2 // 1 at 0.9, 0 at 0.7
+		return interpolateColor(txt, bg, factor)
 	} else if lightness < 0.15 {
-		newLightness = lightTextValue
+		// Black -> light text (use full RGB for tinted text)
+		return txt.R, txt.G, txt.B
 	} else if lightness < 0.4 {
-		factor := lightness / 0.4
-		newLightness = 0.88 - factor*0.3
-	} else {
-		newLightness = 1 - lightness
+		// Dark gray -> interpolate from text color
+		factor := lightness / 0.4 // 0 at 0, 1 at 0.4
+		midGray := 0.5
+		return txt.R - factor*(txt.R-midGray),
+			txt.G - factor*(txt.G-midGray),
+			txt.B - factor*(txt.B-midGray)
 	}
 
-	return newLightness, newLightness, newLightness
+	// Mid gray - simple inversion
+	inverted := 1 - lightness
+	return inverted, inverted, inverted
+}
+
+// interpolateColor linearly interpolates between two colors
+func interpolateColor(c1, c2 colors.Color, t float64) (r, g, b float64) {
+	r = c1.R + t*(c2.R-c1.R)
+	g = c1.G + t*(c2.G-c1.G)
+	b = c1.B + t*(c2.B-c1.B)
+	return
 }
 
 // adjustColorfulRGB adjusts colorful pixels for dark mode

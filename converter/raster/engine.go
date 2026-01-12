@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"pdfdarkmode/converter/colors"
+
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 )
@@ -19,11 +21,11 @@ type Engine struct {
 }
 
 // NewEngine creates a new raster conversion engine
-func NewEngine(dpi int) *Engine {
+func NewEngine(dpi int, scheme colors.Scheme) *Engine {
 	return &Engine{
 		dpi:      dpi,
 		renderer: NewRenderer(dpi),
-		inverter: NewInverter(),
+		inverter: NewInverter(scheme),
 	}
 }
 

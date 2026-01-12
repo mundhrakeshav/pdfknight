@@ -4,20 +4,18 @@ import (
 	"image"
 	"image/color"
 	"math"
-)
 
-// Dark mode color palette
-var (
-	darkBackground = color.RGBA{R: 26, G: 26, B: 26, A: 255}    // #1a1a1a
-	lightText      = color.RGBA{R: 224, G: 224, B: 224, A: 255} // #e0e0e0
+	"pdfdarkmode/converter/colors"
 )
 
 // Inverter handles smart color inversion for dark mode
-type Inverter struct{}
+type Inverter struct {
+	scheme colors.Scheme
+}
 
-// NewInverter creates a new Inverter
-func NewInverter() *Inverter {
-	return &Inverter{}
+// NewInverter creates a new Inverter with the given color scheme
+func NewInverter(scheme colors.Scheme) *Inverter {
+	return &Inverter{scheme: scheme}
 }
 
 // InvertImage applies smart dark mode inversion to an image
@@ -64,24 +62,30 @@ func (inv *Inverter) smartInvertPixel(c color.Color) color.Color {
 
 // invertDocumentColor inverts grayscale document colors for dark mode
 func (inv *Inverter) invertDocumentColor(r, g, b, a uint8, lightness float64) color.Color {
+	bg := inv.scheme.Background
+	txt := inv.scheme.Text
+
 	if lightness > 0.9 {
-		// Very light (white background) -> dark background
-		return color.RGBA{R: darkBackground.R, G: darkBackground.G, B: darkBackground.B, A: a}
+		// Very light (white background) -> dark background (full RGB)
+		return color.RGBA{R: bg.R8, G: bg.G8, B: bg.B8, A: a}
 	} else if lightness > 0.7 {
-		// Light gray -> dark gray (gradual transition)
-		factor := (lightness - 0.7) / 0.2 // 0 to 1
-		newLightness := 0.1 + (1-factor)*0.15
-		gray := uint8(newLightness * 255)
-		return color.RGBA{R: gray, G: gray, B: gray, A: a}
+		// Light gray -> interpolate towards background
+		factor := (lightness - 0.7) / 0.2 // 1 at 0.9, 0 at 0.7
+		newR := txt.R + factor*(bg.R-txt.R)
+		newG := txt.G + factor*(bg.G-txt.G)
+		newB := txt.B + factor*(bg.B-txt.B)
+		return color.RGBA{R: uint8(newR * 255), G: uint8(newG * 255), B: uint8(newB * 255), A: a}
 	} else if lightness < 0.15 {
-		// Very dark (black text) -> light text
-		return color.RGBA{R: lightText.R, G: lightText.G, B: lightText.B, A: a}
+		// Very dark (black text) -> light text (full RGB for tinted text)
+		return color.RGBA{R: txt.R8, G: txt.G8, B: txt.B8, A: a}
 	} else if lightness < 0.4 {
-		// Dark gray -> light gray (gradual transition)
-		factor := lightness / 0.4 // 0 to 1
-		newLightness := 0.88 - factor*0.3
-		gray := uint8(newLightness * 255)
-		return color.RGBA{R: gray, G: gray, B: gray, A: a}
+		// Dark gray -> interpolate from text color towards mid-gray
+		factor := lightness / 0.4 // 0 at 0, 1 at 0.4
+		midGray := 0.5
+		newR := txt.R - factor*(txt.R-midGray)
+		newG := txt.G - factor*(txt.G-midGray)
+		newB := txt.B - factor*(txt.B-midGray)
+		return color.RGBA{R: uint8(newR * 255), G: uint8(newG * 255), B: uint8(newB * 255), A: a}
 	}
 
 	// Mid-gray: simple inversion

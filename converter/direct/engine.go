@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	"pdfdarkmode/converter/colors"
+
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -14,14 +16,16 @@ type Engine struct {
 	preserveImages bool
 	parser         *Parser
 	transformer    *Transformer
+	colorScheme    colors.Scheme
 }
 
 // NewEngine creates a new direct manipulation engine
-func NewEngine(preserveImages bool) *Engine {
+func NewEngine(preserveImages bool, scheme colors.Scheme) *Engine {
 	return &Engine{
 		preserveImages: preserveImages,
 		parser:         NewParser(),
-		transformer:    NewTransformer(),
+		transformer:    NewTransformer(scheme),
+		colorScheme:    scheme,
 	}
 }
 
@@ -236,12 +240,17 @@ func (e *Engine) addPageBackground(ctx *model.Context, pageNum int) error {
 	}
 
 	// Create background content - this will be PREPENDED to draw behind existing content
-	// 1. Draw dark background rectangle (#1a1a1a = 26/255 ≈ 0.102)
-	// 2. Set default text/fill color to light gray (#e0e0e0 = 224/255 ≈ 0.878)
-	// 3. Set default stroke color to light gray
+	// 1. Draw dark background rectangle using configured colors
+	// 2. Set default text/fill color using configured text color
+	// 3. Set default stroke color to text color
 	// This ensures any text without explicit color uses light color on dark background
-	bgContent := fmt.Sprintf("q 0.102 0.102 0.102 rg %.2f %.2f %.2f %.2f re f Q 0.878 0.878 0.878 rg 0.878 0.878 0.878 RG\n",
-		mediaBox.LL.X, mediaBox.LL.Y, mediaBox.Width(), mediaBox.Height())
+	bg := e.colorScheme.Background
+	txt := e.colorScheme.Text
+	bgContent := fmt.Sprintf("q %.3f %.3f %.3f rg %.2f %.2f %.2f %.2f re f Q %.3f %.3f %.3f rg %.3f %.3f %.3f RG\n",
+		bg.R, bg.G, bg.B,
+		mediaBox.LL.X, mediaBox.LL.Y, mediaBox.Width(), mediaBox.Height(),
+		txt.R, txt.G, txt.B,
+		txt.R, txt.G, txt.B)
 
 	// Get the Contents entry
 	contentsEntry, found := pageDict.Find("Contents")
